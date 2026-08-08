@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ECG Pulse Match — Levels</title>
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+<div class="screen">
+  <div class="topbar">
+    <div class="brand"><span class="dot"></span> ECG PULSE MATCH</div>
+    <div class="hstack">
+      <span class="stat-pill" id="userPill">👤 —</span>
+      <a class="btn btn-ghost" href="admin.html" id="backToAdminBtn" style="display:none;">🛠 Back to admin</a>
+      <a class="btn btn-ghost" href="leaderboard.html">🏆 Leaderboard</a>
+      <a class="btn btn-ghost" href="certificate.html">🎓 Certificate</a>
+      <button class="btn btn-ghost" id="logoutBtn">Sign out</button>
+    </div>
+  </div>
+
+  <div class="container" style="flex:1; padding-top:26px; padding-bottom:40px;">
+    <h1 style="font-size:26px;" class="gradient-text">Choose a level</h1>
+    <p style="color:var(--ui-dim); margin-top:8px;">Every level is a single rhythm, start to finish. Master it, then unlock the next.</p>
+    <div id="certBanner"></div>
+    <div class="level-grid" id="levelGrid"></div>
+  </div>
+
+  <footer class="foot">Synthetic waveforms for educational / gameplay purposes only — not for clinical diagnosis.</footer>
+</div>
+
+<script src="js/ecg-data.js"></script>
+<script src="js/ecg-svg.js"></script>
+<script src="js/common.js"></script>
+<script>
+  const user = requireLogin();
+  if (user) {
+    document.getElementById("userPill").textContent = "👤 " + user.name;
+    if (user.isAdmin && !isAdminPreviewing()) window.location.href = "admin.html";
+    if (user.isAdmin && isAdminPreviewing()) {
+      document.getElementById("userPill").textContent = "👤 " + user.name + " (preview)";
+      document.getElementById("backToAdminBtn").style.display = "inline-flex";
+      document.getElementById("backToAdminBtn").addEventListener("click", exitAdminPreview);
+    }
+
+    document.getElementById("logoutBtn").addEventListener("click", logout);
+    spawnFloatParticles(10);
+
+    if (isCourseComplete(user.name)) {
+      document.getElementById("certBanner").innerHTML = `
+        <a href="certificate.html" style="text-decoration:none;">
+          <div class="stat-pill" style="display:flex; justify-content:space-between; align-items:center; margin:18px 0 4px; padding:14px 18px; cursor:pointer;">
+            <span>🎓 All ${LEVELS.length} rhythms cleared — your certificate is ready.</span>
+            <span style="color:var(--trace-green); font-weight:600;">View certificate →</span>
+          </div>
+        </a>`;
+    }
+
+    const progress = getProgress(user.name);
+    const grid = document.getElementById("levelGrid");
+    const starsFor = (difficulty) => ({ easy: "★", medium: "★★", hard: "★★★" }[difficulty] || "★");
+
+    LEVELS.forEach((lvl, idx) => {
+      const topicType = ECG_TYPES[lvl.waveforms[0]];
+      const theme = themeForLevel(lvl.level);
+      const locked = lvl.level > progress.unlocked;
+      const done = lvl.level < progress.unlocked;
+      const card = document.createElement("div");
+      card.className = "level-card" + (locked ? " level-locked" : "");
+      card.style.setProperty("--accent", theme.accent);
+      card.style.setProperty("--accent-dim", theme.accent2);
+      card.style.setProperty("--accent-glow", theme.accent + "33");
+      card.style.animationDelay = (idx * 0.06) + "s";
+      card.innerHTML = `
+        <div class="level-card-inner">
+          <div class="badge">${locked ? lvl.level : theme.icon}</div>
+          ${done ? '<div class="done-tag">✓ cleared</div>' : ""}
+          <div class="level-preview">${locked ? '<span style="color:var(--ui-dim); font-size:22px;">🔒</span>' : renderWaveformSVG(lvl.waveforms[0], 300, 90, { traceColor: theme.accent })}</div>
+          <h3><span>${lvl.title}</span></h3>
+          <p>${lvl.description}</p>
+          <div class="hstack" style="justify-content:space-between; align-items:center;">
+            <span class="pill-diff ${topicType.difficulty}">${topicType.difficulty}</span>
+            <div class="stars">${starsFor(topicType.difficulty)}</div>
+          </div>
+          <button class="btn btn-primary" style="width:100%; margin-top:14px;" ${locked ? "disabled" : ""}>${locked ? "🔒 Locked" : "Play level →"}</button>
+        </div>
+      `;
+      if (!locked) {
+        card.querySelector("button").addEventListener("click", () => {
+          window.location.href = `game.html?level=${lvl.level}`;
+        });
+        attachTilt(card, { max: 9 });
+      }
+      grid.appendChild(card);
+    });
+  }
+</script>
+</body>
+</html>

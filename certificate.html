@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ECG Pulse Match — Certificate</title>
+<link rel="stylesheet" href="css/style.css" />
+<style>
+  .cert-wrap { display:flex; flex-direction:column; align-items:center; gap:22px; padding: 30px 16px 60px; }
+  .cert-frame {
+    width: min(100%, 920px); aspect-ratio: 1.55 / 1; position: relative;
+    box-shadow: var(--shadow-deep); border-radius: 10px; overflow: hidden;
+  }
+  .cert-frame svg { display:block; width:100%; height:100%; }
+  .cert-actions { display:flex; gap:12px; flex-wrap:wrap; justify-content:center; }
+  .cert-empty { max-width: 520px; text-align:center; margin: 60px auto; }
+  .cert-empty .big { font-size:44px; }
+  @media print {
+    .topbar, .cert-actions, .foot, .cert-note { display:none !important; }
+    body, .screen, .container { background:#fff !important; }
+    .cert-wrap { padding:0; }
+    .cert-frame { box-shadow:none; width:100%; aspect-ratio:auto; height:100vh; }
+    @page { size: landscape; margin: 0.4in; }
+  }
+</style>
+</head>
+<body>
+
+<div class="screen">
+  <div class="topbar">
+    <div class="brand"><span class="dot"></span> ECG PULSE MATCH</div>
+    <div class="hstack">
+      <span class="stat-pill" id="userPill">👤 —</span>
+      <a class="btn btn-ghost" href="levels.html">← Levels</a>
+    </div>
+  </div>
+
+  <div class="container cert-wrap" id="certContainer" style="flex:1;"></div>
+
+  <footer class="foot cert-note">Synthetic training certificate for gameplay purposes only — not a clinical credential.</footer>
+</div>
+
+<script src="js/ecg-data.js"></script>
+<script src="js/ecg-svg.js"></script>
+<script src="js/common.js"></script>
+<script>
+const user = requireLogin();
+if (user) {
+  if (user.isAdmin && !isAdminPreviewing()) window.location.href = "admin.html";
+  document.getElementById("userPill").textContent = "👤 " + user.name;
+
+  const container = document.getElementById("certContainer");
+  const record = getOrIssueCertificate(user.name);
+
+  if (!record) {
+    const progress = getProgress(user.name);
+    const remaining = LEVELS.length - (progress.unlocked - 1);
+    container.innerHTML = `
+      <div class="cert-empty">
+        <div class="big">🔒</div>
+        <h2 style="margin-top:10px;">No certificate yet</h2>
+        <p style="color:var(--ui-dim); margin-top:8px; line-height:1.6;">
+          Clear all ${LEVELS.length} levels to unlock your Certificate of Completion.
+          You've cleared ${progress.unlocked - 1}/${LEVELS.length} so far — ${remaining} level${remaining === 1 ? "" : "s"} to go.
+        </p>
+        <a class="btn btn-primary" style="margin-top:18px; display:inline-block;" href="levels.html">Back to levels →</a>
+      </div>`;
+  } else {
+    const svg = buildCertificateSVG(record);
+    container.innerHTML = `
+      <div class="cert-frame" id="certFrame">${svg}</div>
+      <div class="cert-actions">
+        <button class="btn btn-primary" id="downloadBtn">⬇️ Download as PNG</button>
+        <button class="btn btn-ghost" id="printBtn">🖨️ Print / Save as PDF</button>
+      </div>`;
+
+    document.getElementById("printBtn").addEventListener("click", () => window.print());
+    document.getElementById("downloadBtn").addEventListener("click", () => downloadCertificatePNG(record));
+  }
+}
+
+/* Builds the certificate as a self-contained vector SVG (no external
+   fonts/images required) so it renders identically on screen, in print,
+   and when rasterized to PNG. */
+function buildCertificateSVG(record) {
+  const W = 1200, H = 774;
+  const accent = "#1c6b45";
+  const gold = "#c99a3a";
+
+  // decorative heartbeat trace across the top, reusing the same wave
+  // generator the game itself uses (Normal Sinus Rhythm), just re-tinted
+  // in "ink on paper" colors instead of the monitor phosphor-green.
+  const tracePts = generateWaveformPoints("NSR", W - 160, 70);
+  const tracePath = pointsToPath(tracePts.map(([x, y]) => [x + 80, y * 0.55 + 40]));
+
+  const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+  return `
+  <svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" font-family="'Space Grotesk','Segoe UI',sans-serif">
+    <rect x="0" y="0" width="${W}" height="${H}" fill="#f4efe4"/>
+    <rect x="0" y="0" width="${W}" height="${H}" fill="none" stroke="${gold}" stroke-width="10"/>
+    <rect x="20" y="20" width="${W - 40}" height="${H - 40}" fill="none" stroke="${accent}" stroke-width="2"/>
+    <g opacity="0.55"><path d="${tracePath}" fill="none" stroke="${accent}" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/></g>
+
+    <text x="${W / 2}" y="150" text-anchor="middle" font-size="16" letter-spacing="6" fill="${gold}" font-weight="700">ECG PULSE MATCH</text>
+    <text x="${W / 2}" y="210" text-anchor="middle" font-size="44" fill="#1a1f1c" font-weight="700" letter-spacing="1">Certificate of Completion</text>
+    <text x="${W / 2}" y="248" text-anchor="middle" font-size="15" fill="#5c6560" letter-spacing="2">ARRHYTHMIA RECOGNITION TRAINING</text>
+
+    <text x="${W / 2}" y="330" text-anchor="middle" font-size="16" fill="#5c6560">This certifies that</text>
+    <text x="${W / 2}" y="392" text-anchor="middle" font-size="52" fill="${accent}" font-weight="700">${esc(record.name)}</text>
+    <line x1="${W / 2 - 260}" y1="415" x2="${W / 2 + 260}" y2="415" stroke="${gold}" stroke-width="1.5"/>
+
+    <foreignObject x="${W / 2 - 340}" y="435" width="680" height="90">
+      <div xmlns="http://www.w3.org/1999/xhtml" style="font-family:'Inter','Segoe UI',sans-serif; font-size:16px; line-height:1.6; color:#3d4440; text-align:center;">
+        has successfully identified and reconstructed all <strong>${record.levelsCompleted} ECG rhythms</strong> —
+        from Normal Sinus Rhythm through Ventricular Fibrillation — completing the full ECG Pulse Match curriculum.
+      </div>
+    </foreignObject>
+
+    <g transform="translate(${W / 2}, 610)">
+      <circle r="46" fill="none" stroke="${gold}" stroke-width="3"/>
+      <circle r="38" fill="none" stroke="${gold}" stroke-width="1"/>
+      <text x="0" y="-4" text-anchor="middle" font-size="26">🫀</text>
+      <text x="0" y="22" text-anchor="middle" font-size="10.5" letter-spacing="1.5" fill="${gold}" font-weight="700">VERIFIED</text>
+    </g>
+
+    <text x="90" y="700" font-size="12.5" fill="#5c6560" letter-spacing="0.5">DATE COMPLETED</text>
+    <text x="90" y="722" font-size="16" fill="#1a1f1c" font-weight="600">${esc(formatDateNice(record.completedAt))}</text>
+
+    <text x="${W - 90}" y="700" text-anchor="end" font-size="12.5" fill="#5c6560" letter-spacing="0.5">CERTIFICATE ID</text>
+    <text x="${W - 90}" y="722" text-anchor="end" font-size="16" fill="#1a1f1c" font-weight="600">${esc(record.certId)}</text>
+
+    <line x1="${W / 2 - 130}" y1="704" x2="${W / 2 + 130}" y2="704" stroke="#1a1f1c" stroke-width="1.2"/>
+    <text x="${W / 2}" y="722" text-anchor="middle" font-size="13" fill="#5c6560" letter-spacing="0.5">ECG PULSE MATCH FACULTY</text>
+  </svg>`;
+}
+
+/* Rasterizes the certificate SVG to a downloadable PNG. foreignObject
+   requires the SVG to declare its own XHTML namespace (done above) and
+   to be fully self-contained - no external stylesheet/font dependency -
+   which is why all certificate styling is inlined. */
+function downloadCertificatePNG(record) {
+  const svgEl = document.querySelector("#certFrame svg");
+  const serialized = new XMLSerializer().serializeToString(svgEl);
+  const svgBlob = new Blob([serialized], { type: "image/svg+xml;charset=utf-8" });
+  const url = URL.createObjectURL(svgBlob);
+  const img = new Image();
+  img.onload = () => {
+    const scale = 2; // export at 2x for a crisp, print-friendly PNG
+    const canvas = document.createElement("canvas");
+    canvas.width = 1200 * scale;
+    canvas.height = 774 * scale;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#f4efe4";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    URL.revokeObjectURL(url);
+    canvas.toBlob((blob) => {
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `ECG-Pulse-Match-Certificate-${record.certId}.png`;
+      a.click();
+    }, "image/png");
+  };
+  img.onerror = () => { URL.revokeObjectURL(url); alert("Couldn't render the certificate image. Try Print / Save as PDF instead."); };
+  img.src = url;
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ECG Pulse Match — Leaderboard</title>
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+<div class="screen">
+  <div class="topbar">
+    <div class="brand"><span class="dot"></span> ECG PULSE MATCH</div>
+    <div class="hstack">
+      <a class="btn btn-ghost" href="levels.html">← Levels</a>
+      <button class="btn btn-ghost" id="logoutBtn">Sign out</button>
+    </div>
+  </div>
+
+  <div class="container" style="flex:1; padding-top:26px; padding-bottom:40px;">
+    <h1 style="font-size:26px;" class="gradient-text">🏆 Leaderboard</h1>
+    <p style="color:var(--ui-dim); margin-top:8px; margin-bottom:18px;">Total points per player — best score on each level they've cleared, added up. Stored on this device.</p>
+
+    <div class="panel">
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr><th>#</th><th>Player</th><th>Total points</th><th>Levels played</th><th>Best single score</th><th>Last played</th></tr>
+          </thead>
+          <tbody id="lbBody"></tbody>
+        </table>
+      </div>
+      <div class="empty-state" id="emptyState" style="display:none;">No scores yet — play a level to appear here!</div>
+    </div>
+  </div>
+  <footer class="foot">Scores are stored locally in this browser.</footer>
+</div>
+
+<script src="js/ecg-data.js"></script>
+<script src="js/common.js"></script>
+<script>
+  const user = requireLogin();
+  if (user) {
+    document.getElementById("logoutBtn").addEventListener("click", logout);
+    const rows = getPlayerLeaderboard();
+    const body = document.getElementById("lbBody");
+    const medals = ["🥇", "🥈", "🥉"];
+    if (!rows.length) {
+      document.getElementById("emptyState").style.display = "block";
+    } else {
+      rows.forEach((r, i) => {
+        const tr = document.createElement("tr");
+        tr.style.animation = `rise .4s ease both`;
+        tr.style.animationDelay = (i * 0.02) + "s";
+        tr.innerHTML = `
+          <td class="${i === 0 ? "rank-1" : ""}">${medals[i] || (i + 1)}</td>
+          <td>${r.name}${r.name === user.name ? " (you)" : ""}</td>
+          <td class="mono">${r.totalPoints}</td>
+          <td>${r.levelsPlayed}/${LEVELS.length}</td>
+          <td class="mono">${r.bestSingle}</td>
+          <td>${new Date(r.lastPlayed).toLocaleDateString()}</td>
+        `;
+        body.appendChild(tr);
+      });
+    }
+  }
+</script>
+</body>
+</html>

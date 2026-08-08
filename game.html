@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ECG Pulse Match — Play</title>
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+<div class="screen">
+  <div class="topbar">
+    <div class="brand"><span class="dot"></span> ECG PULSE MATCH</div>
+    <div class="hstack">
+      <span class="stat-pill">⏱ <span id="timerReadout">00:00</span></span>
+      <a class="btn btn-ghost" href="admin.html" id="backToAdminBtn" style="display:none;">🛠 Back to admin</a>
+      <a class="btn btn-ghost" href="levels.html">← Levels</a>
+    </div>
+  </div>
+
+  <div class="container" style="flex:1; padding-top:22px; padding-bottom:140px;">
+    <div class="game-header">
+      <div>
+        <h1 id="levelTitle" style="font-size:24px;"></h1>
+        <p id="levelDesc" style="color:var(--ui-dim); margin-top:4px;"></p>
+      </div>
+      <div class="hstack">
+        <span class="stat-pill">🎯 <span class="label">potential</span> <span id="scorePreview">0</span> pts</span>
+        <span class="stat-pill">🧩 <span id="progressReadout">0/0</span> placed</span>
+      </div>
+    </div>
+
+    <p style="color:var(--ui-dim); font-size:13.5px; margin-bottom:6px;">
+      Each strip below is missing its wave. Drag pieces from the tray into the empty slots to rebuild it —
+      the tray has real pieces <b>and</b> decoys that won't fit the pattern. Faster, more accurate runs score higher.
+    </p>
+
+    <div class="attempt-banner" id="attemptBanner"></div>
+
+    <div class="board" id="board"></div>
+  </div>
+
+  <div class="piece-pool" id="piecePool">
+    <div class="pool-label">Piece tray — drag a piece into any empty slot</div>
+  </div>
+
+  <div class="submit-row" style="position:fixed; left:0; right:0; bottom:86px; z-index:16;">
+    <button class="btn btn-primary" id="submitBtn" style="min-width:220px;">Check answers</button>
+  </div>
+</div>
+
+<script src="js/ecg-data.js"></script>
+<script src="js/ecg-svg.js"></script>
+<script src="js/common.js"></script>
+<script>
+const user = requireLogin();
+if (user) {
+  if (user.isAdmin && !isAdminPreviewing()) window.location.href = "admin.html";
+  if (user.isAdmin && isAdminPreviewing()) {
+    const backBtn = document.getElementById("backToAdminBtn");
+    backBtn.style.display = "inline-flex";
+    backBtn.addEventListener("click", exitAdminPreview);
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  const levelNum = parseInt(params.get("level") || "1", 10);
+  const level = LEVELS.find((l) => l.level === levelNum) || LEVELS[0];
+  const N = level.segments || 4;             // pieces per strip
+  const TRACK_W = 700, TRACK_H = 220;         // logical size used only for slicing math
+
+  const theme = themeForLevel(level.level);
+  applyAccent(document.documentElement, theme);
+  document.getElementById("levelTitle").textContent = `${theme.icon} ${level.title}`;
+  document.getElementById("levelDesc").textContent = level.description;
+
+  // ---- build cards (one per target rhythm to reconstruct) ----
+  const cards = shuffle(level.waveforms).map((typeId, i) => ({
+    id: "card_" + i,
+    typeId,
+    def: ECG_TYPES[typeId],
+  }));
+
+  const board = document.getElementById("board");
+  board.classList.toggle("cols-3", cards.length >= 5);
+
+  let pieceCounter = 0;
+  const allPieceDefs = []; // {sourceType, seg}
+
+  cards.forEach((card) => {
+    const el = document.createElement("div");
+    el.className = "wave-card";
+    el.dataset.cardId = card.id;
+    let slotsHtml = "";
+    for (let s = 0; s < N; s++) slotsHtml += `<div class="slot" data-card-id="${card.id}" data-slot-idx="${s}"><span class="slot-idx">${s + 1}</span></div>`;
+    el.innerHTML = `
+      <span class="result-tag"></span>
+      <h3 style="font-size:15.5px; margin-bottom:2px;">${card.def.name}</h3>
+      <div class="track">${slotsHtml}</div>
+      <button type="button" class="card-hint-btn" data-card-id="${card.id}">💡 Which piece goes first?</button>
+      <div class="order-hint-row" data-card-id="${card.id}">💡 ${level.orderHint || "Segment 1 is always the earliest part of the strip — read the pattern left to right."}</div>
+      <div class="card-note for-reorder">🔀 You've got the right pieces — they're just out of order. Tap <b>Fix order</b> to snap them into place.</div>
+      <div class="card-note for-wrong">✕ One or more pieces here don't belong to this rhythm. Swap out the wrong ones, then arrange the right pieces in order.</div>
+      <div class="card-actions-row">
+        <button type="button" class="btn-reorder" data-card-id="${card.id}">🔀 Fix order</button>
+      </div>
+      <div class="hint-row">💡 ${card.def.hint}</div>
+    `;
+    board.appendChild(el);
+
+    // correct pieces for this card
+    for (let s = 0; s < N; s++) allPieceDefs.push({ sourceType: card.typeId, seg: s });
+
+    // decoy pieces: pulled from other rhythm types at the SAME segment index, so they physically
+    // fit the slot but are the wrong shape/pattern. We deliberately steer AWAY from clinically
+    // similar/confusable rhythms (level.extraDistractors) and instead pull from maximally
+    // different topics, so the tray never fills up with near-duplicate look-alike options.
+    const decoyCount = Math.max(2, Math.round(N * 0.6));
+    const avoidAsTooSimilar = new Set([card.typeId, ...(level.extraDistractors || [])]);
+    const farTypes = shuffle(Object.keys(ECG_TYPES).filter((t) => !avoidAsTooSimilar.has(t)));
+    const fallbackTypes = shuffle(Object.keys(ECG_TYPES).filter((t) => t !== card.typeId && !farTypes.includes(t)));
+    const decoyTypePool = farTypes.length >= decoyCount ? farTypes : farTypes.concat(fallbackTypes);
+    for (let d = 0; d < decoyCount; d++) {
+      // walk through the shuffled pool without repeating a topic until every option has been used once
+      const decoyType = decoyTypePool[d % decoyTypePool.length];
+      const seg = Math.floor(Math.random() * N);
+      allPieceDefs.push({ sourceType: decoyType, seg });
+    }
+  });
+
+  const piecePool = document.getElementById("piecePool");
+  shuffle(allPieceDefs).forEach((def) => {
+    const piece = document.createElement("div");
+    piece.className = "piece";
+    piece.dataset.pieceId = "p" + pieceCounter++;
+    piece.dataset.sourceType = def.sourceType;
+    piece.dataset.seg = def.seg;
+    piece.innerHTML = renderPieceSVG(def.sourceType, def.seg, N, TRACK_W, TRACK_H, { traceColor: theme.accent });
+    piecePool.appendChild(piece);
+    makeDraggable(piece);
+  });
+
+  // one order-hint per level: tap toggles the "what goes first" tip for that card
+  document.querySelectorAll(".card-hint-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const row = document.querySelector(`.order-hint-row[data-card-id="${btn.dataset.cardId}"]`);
+      if (row) row.classList.toggle("shown");
+    });
+  });
+
+  function updateProgress() {
+    const filled = document.querySelectorAll(".slot.filled").length;
+    const total = cards.length * N;
+    document.getElementById("progressReadout").textContent = `${filled}/${total}`;
+    document.getElementById("submitBtn").disabled = filled < total;
+  }
+  updateProgress();
+
+  function resetSlot(slotEl) {
+    slotEl.innerHTML = `<span class="slot-idx">${parseInt(slotEl.dataset.slotIdx, 10) + 1}</span>`;
+    slotEl.classList.remove("filled", "correct", "wrong", "right-type-wrong-pos");
+  }
+  function moveToTray(pieceEl) {
+    pieceEl.classList.remove("in-slot");
+    piecePool.appendChild(pieceEl);
+  }
+  function placeInSlot(pieceEl, slotEl) {
+    const occupant = slotEl.querySelector(".piece");
+    if (occupant && occupant !== pieceEl) moveToTray(occupant);
+    slotEl.innerHTML = "";
+    slotEl.appendChild(pieceEl);
+    pieceEl.classList.add("in-slot");
+    slotEl.classList.remove("correct", "wrong", "right-type-wrong-pos");
+    slotEl.classList.add("filled");
+    // brief "snap into place" pulse so the drop feels tactile, while the
+    // track's own gap keeps each piece visibly separate from its neighbors
+    slotEl.classList.remove("just-snapped");
+    void slotEl.offsetWidth; // restart animation
+    slotEl.classList.add("just-snapped");
+    setTimeout(() => slotEl.classList.remove("just-snapped"), 260);
+  }
+
+  let submitted = false;
+
+  function makeDraggable(pieceEl) {
+    pieceEl.addEventListener("pointerdown", (e) => {
+      if (submitted || pieceEl.dataset.locked === "1") return;
+      e.preventDefault();
+      const rect = pieceEl.getBoundingClientRect();
+      const originSlot = pieceEl.parentElement.classList.contains("slot") ? pieceEl.parentElement : null;
+
+      const clone = pieceEl.cloneNode(true);
+      clone.classList.add("piece", "dragging");
+      clone.style.width = rect.width + "px";
+      clone.style.height = rect.height + "px";
+      clone.style.left = rect.left + "px";
+      clone.style.top = rect.top + "px";
+      document.body.appendChild(clone);
+      pieceEl.classList.add("ghost");
+
+      const offsetX = e.clientX - rect.left;
+      const offsetY = e.clientY - rect.top;
+      let currentSlot = null;
+
+      function move(ev) {
+        clone.style.left = ev.clientX - offsetX + "px";
+        clone.style.top = ev.clientY - offsetY + "px";
+        const el = document.elementFromPoint(ev.clientX, ev.clientY);
+        const slotEl = el && el.closest(".slot");
+        if (slotEl !== currentSlot) {
+          if (currentSlot) currentSlot.classList.remove("dragover");
+          currentSlot = slotEl;
+          if (currentSlot) currentSlot.classList.add("dragover");
+        }
+      }
+      function up() {
+        document.removeEventListener("pointermove", move);
+        document.removeEventListener("pointerup", up);
+        clone.remove();
+        pieceEl.classList.remove("ghost");
+        if (currentSlot) currentSlot.classList.remove("dragover");
+
+        if (currentSlot) {
+          if (originSlot && originSlot !== currentSlot) resetSlot(originSlot);
+          placeInSlot(pieceEl, currentSlot);
+        } else if (originSlot) {
+          resetSlot(originSlot);
+          moveToTray(pieceEl);
+        }
+        updateProgress();
+      }
+      document.addEventListener("pointermove", move);
+      document.addEventListener("pointerup", up);
+    });
+  }
+
+  // ---- timer + live decaying "potential score" ----
+  const totalSlots = cards.length * N;
+  const maxScore = totalSlots * 25;
+  const floorScore = Math.round(maxScore * 0.3);
+  const decayPerSec = (maxScore - floorScore) / level.timeBonusSeconds;
+  const startTime = performance.now();
+  const timerEl = document.getElementById("timerReadout");
+  const scoreEl = document.getElementById("scorePreview");
+  let liveScore = maxScore;
+  scoreEl.textContent = liveScore;
+  const timerInterval = setInterval(() => {
+    const elapsed = (performance.now() - startTime) / 1000;
+    timerEl.textContent = formatTime(elapsed);
+    liveScore = Math.max(floorScore, Math.round(maxScore - elapsed * decayPerSec));
+    scoreEl.textContent = liveScore;
+  }, 250);
+
+  // ---- checking / reordering / submit ----
+  // Phase 1 ("Check answers"): evaluate every card without ending the attempt.
+  //   - Fully correct cards get locked in place.
+  //   - Cards holding the right pieces in the wrong order get a "Fix order" button.
+  //   - Cards holding at least one wrong (decoy) piece get an inline warning message.
+  // Phase 2 ("Finish & score"): locks everything, scores, saves, shows the result modal.
+  let phase = 1;
+  const submitBtn = document.getElementById("submitBtn");
+  const attemptBanner = document.getElementById("attemptBanner");
+
+  function evaluateCard(card) {
+    const cardEl = document.querySelector(`.wave-card[data-card-id="${card.id}"]`);
+    let cardCorrect = 0;
+    let correctTypeCount = 0;
+    for (let s = 0; s < N; s++) {
+      const slotEl = cardEl.querySelector(`.slot[data-slot-idx="${s}"]`);
+      const pieceEl = slotEl.querySelector(".piece");
+      const isRightType = pieceEl.dataset.sourceType === card.typeId;
+      const isRight = isRightType && parseInt(pieceEl.dataset.seg, 10) === s;
+      slotEl.classList.remove("correct", "wrong", "right-type-wrong-pos");
+      if (isRight) { slotEl.classList.add("correct"); cardCorrect++; }
+      else if (isRightType) { slotEl.classList.add("right-type-wrong-pos"); }
+      else { slotEl.classList.add("wrong"); }
+      if (isRightType) correctTypeCount++;
+    }
+    cardEl.classList.remove("correct", "wrong", "reorderable");
+    let status;
+    if (cardCorrect === N) status = "correct";
+    else if (correctTypeCount === N) status = "reorderable"; // right pieces, wrong slots
+    else status = "wrong"; // at least one decoy piece present
+    cardEl.classList.add(status);
+    cardEl.querySelector(".result-tag").textContent =
+      status === "correct" ? "✓ Correct" :
+      status === "reorderable" ? "🔀 Right pieces, wrong order" :
+      `✕ ${cardCorrect}/${N} pieces right`;
+    if (status === "correct") lockCardPieces(cardEl);
+    return { status, cardCorrect };
+  }
+
+  function lockCardPieces(cardEl) {
+    cardEl.querySelectorAll(".piece").forEach((p) => { p.dataset.locked = "1"; p.style.cursor = "default"; });
+  }
+
+  function fixCardOrder(card) {
+    if (submitted) return;
+    const cardEl = document.querySelector(`.wave-card[data-card-id="${card.id}"]`);
+    const slots = [...cardEl.querySelectorAll(".slot")];
+    const pieceForSeg = {};
+    slots.forEach((slotEl) => {
+      const pieceEl = slotEl.querySelector(".piece");
+      if (pieceEl) pieceForSeg[pieceEl.dataset.seg] = pieceEl;
+    });
+    slots.forEach((slotEl, s) => {
+      const correctPiece = pieceForSeg[s];
+      if (correctPiece) placeInSlot(correctPiece, slotEl);
+    });
+    updateProgress();
+    evaluateCard(card);
+    refreshBanner();
+  }
+
+  document.querySelectorAll(".btn-reorder").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const card = cards.find((c) => c.id === btn.dataset.cardId);
+      if (card) fixCardOrder(card);
+    });
+  });
+
+  function refreshBanner() {
+    const correctCount = cards.filter((c) => document.querySelector(`.wave-card[data-card-id="${c.id}"]`).classList.contains("correct")).length;
+    const reorderCount = cards.filter((c) => document.querySelector(`.wave-card[data-card-id="${c.id}"]`).classList.contains("reorderable")).length;
+    const wrongCount = cards.length - correctCount - reorderCount;
+    if (phase === 1) return;
+    let msg = `${correctCount}/${cards.length} strips correct.`;
+    if (reorderCount) msg += ` ${reorderCount} just need reordering — tap "Fix order" on those.`;
+    if (wrongCount) msg += ` ${wrongCount} still have wrong pieces in them.`;
+    attemptBanner.textContent = "🩺 " + msg;
+    attemptBanner.classList.add("shown");
+  }
+
+  submitBtn.addEventListener("click", () => {
+    const filled = document.querySelectorAll(".slot.filled").length;
+    if (filled < totalSlots) return;
+
+    if (phase === 1) {
+      cards.forEach((card) => evaluateCard(card));
+      phase = 2;
+      submitBtn.textContent = "Finish & score";
+      refreshBanner();
+      return;
+    }
+
+    // phase 2: finalize
+    submitted = true;
+    clearInterval(timerInterval);
+    const timeTakenSec = (performance.now() - startTime) / 1000;
+
+    let correctSlots = 0;
+    let allCardsCorrect = true;
+    cards.forEach((card) => {
+      const { status, cardCorrect } = evaluateCard(card);
+      correctSlots += cardCorrect;
+      if (status !== "correct") allCardsCorrect = false;
+      document.querySelector(`.wave-card[data-card-id="${card.id}"]`).classList.add("show-hint");
+    });
+    attemptBanner.classList.remove("shown");
+
+    const accuracy = correctSlots / totalSlots;
+    const finalScore = Math.round(liveScore * accuracy);
+    document.getElementById("scorePreview").textContent = finalScore;
+
+    addLeaderboardEntry({
+      name: user.name,
+      level: level.level,
+      score: finalScore,
+      correct: correctSlots,
+      total: totalSlots,
+      timeTakenSec: Math.round(timeTakenSec),
+    });
+
+    let justCertified = false;
+    if (allCardsCorrect) {
+      unlockNextLevel(user.name, level.level);
+      launchConfetti();
+      if (level.level === LEVELS.length) { getOrIssueCertificate(user.name); justCertified = true; }
+    }
+    showResultModal({ correctSlots, totalSlots, finalScore, timeTakenSec, allCardsCorrect, level, justCertified });
+  });
+
+  function showResultModal({ correctSlots, totalSlots, finalScore, timeTakenSec, allCardsCorrect, level, justCertified }) {
+    const backdrop = document.createElement("div");
+    backdrop.className = "modal-backdrop";
+    const isFinalLevel = level.level === LEVELS.length;
+    let actionsHtml;
+    if (justCertified) {
+      actionsHtml = `<button class="btn btn-ghost" id="retryBtn">Retry level</button><button class="btn btn-primary" id="certBtn">🎓 Get your certificate</button>`;
+    } else if (allCardsCorrect && !isFinalLevel) {
+      actionsHtml = `<button class="btn btn-ghost" id="retryBtn">Retry level</button><button class="btn btn-primary" id="nextBtn">Next level →</button>`;
+    } else {
+      actionsHtml = `<button class="btn btn-ghost" id="retryBtn">Retry level</button><button class="btn btn-primary" id="levelsBtn">Back to levels</button>`;
+    }
+    backdrop.innerHTML = `
+      <div class="modal">
+        <div style="font-size:38px;">${justCertified ? "🎓" : allCardsCorrect ? "🎉" : "🩺"}</div>
+        <h2 style="margin:10px 0 4px;">${justCertified ? "Course complete!" : allCardsCorrect ? "Perfectly rebuilt!" : "Keep practicing"}</h2>
+        <div class="score-num">${finalScore}</div>
+        <p>${correctSlots}/${totalSlots} pieces correct · ${formatTime(timeTakenSec)} elapsed</p>
+        ${justCertified ? `<p style="color:var(--accent, var(--trace-green)); font-weight:600;">You've cleared all ${LEVELS.length} rhythms — your certificate is ready.</p>` : ""}
+        <div class="hstack" style="justify-content:center; margin-top:18px; gap:10px;">
+          ${actionsHtml}
+        </div>
+      </div>
+    `;
+    document.body.appendChild(backdrop);
+    const retry = backdrop.querySelector("#retryBtn");
+    if (retry) retry.addEventListener("click", () => window.location.reload());
+    const next = backdrop.querySelector("#nextBtn");
+    if (next) next.addEventListener("click", () => window.location.href = `game.html?level=${level.level + 1}`);
+    const back = backdrop.querySelector("#levelsBtn");
+    if (back) back.addEventListener("click", () => window.location.href = "levels.html");
+    const cert = backdrop.querySelector("#certBtn");
+    if (cert) cert.addEventListener("click", () => window.location.href = "certificate.html");
+  }
+}
+</script>
+</body>
+</html>

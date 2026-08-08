@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ECG Pulse Match — Admin</title>
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+<div class="screen">
+  <div class="topbar">
+    <div class="brand"><span class="dot"></span> ECG PULSE MATCH · ADMIN</div>
+    <div class="hstack">
+      <span class="stat-pill" id="userPill">👤 —</span>
+      <a class="btn btn-ghost" href="levels.html" id="playAsUserBtn">Play as user</a>
+      <button class="btn btn-ghost" id="logoutBtn">Sign out</button>
+    </div>
+  </div>
+
+  <div class="container" style="flex:1; padding-top:26px; padding-bottom:50px;">
+    <h1 style="font-size:26px;" class="gradient-text">Admin dashboard</h1>
+    <p style="color:var(--ui-dim); margin-top:8px; margin-bottom:22px;">Full read-only view of the rhythm dataset, every level, and every score submitted on this device.</p>
+
+    <div class="stat-card-grid" style="margin-bottom:22px;">
+      <div class="stat-card"><div class="stat-label">Players</div><div class="stat-value" id="statPlayers">0</div></div>
+      <div class="stat-card"><div class="stat-label">Submissions</div><div class="stat-value" id="statSubs">0</div></div>
+      <div class="stat-card"><div class="stat-label">Avg score</div><div class="stat-value" id="statAvg">0</div></div>
+      <div class="stat-card"><div class="stat-label">Rhythm types</div><div class="stat-value" id="statTypes">0</div></div>
+    </div>
+
+    <div class="admin-tabs" id="adminTabs">
+      <button class="admin-tab active" data-tab="overview">📊 Overview</button>
+      <button class="admin-tab" data-tab="dataset">🫀 Dataset</button>
+      <button class="admin-tab" data-tab="levels">🧩 Levels</button>
+      <button class="admin-tab" data-tab="submissions">🏆 Submissions</button>
+    </div>
+
+    <!-- OVERVIEW -->
+    <div class="admin-panel active" id="panel-overview">
+      <div class="panel">
+        <h2>🥇 Top players</h2>
+        <div class="sub">Total points per player — best score on each level they've cleared, added up.</div>
+        <div class="podium-row" id="podiumRow"></div>
+      </div>
+      <div class="panel">
+        <h2>📈 Average score by level</h2>
+        <div class="sub">Each bar is colored to match that level's theme.</div>
+        <div class="bars-chart" id="barsChart"></div>
+      </div>
+    </div>
+
+    <!-- DATASET -->
+    <div class="admin-panel" id="panel-dataset">
+      <div class="panel">
+        <h2>🫀 Rhythm dataset</h2>
+        <div class="sub">Edit <span class="mono">js/ecg-data.js</span> to add, remove, or reword any rhythm/hint/level. One unique rhythm per level — nothing repeats.</div>
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th>ID</th><th>Name</th><th>Difficulty</th><th>Typical rate</th><th>Hint text</th></tr></thead>
+            <tbody id="typesBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- LEVELS -->
+    <div class="admin-panel" id="panel-levels">
+      <div class="panel">
+        <h2>🧩 Levels</h2>
+        <div class="sub">16 levels, 16 distinct topics, 16 distinct colors.</div>
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th>Level</th><th>Color</th><th>Title</th><th>Waveforms</th><th>Distractors</th><th>Time bonus window</th></tr></thead>
+            <tbody id="levelsBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- SUBMISSIONS -->
+    <div class="admin-panel" id="panel-submissions">
+      <div class="panel">
+        <div class="hstack" style="justify-content:space-between; flex-wrap:wrap; gap:10px;">
+          <div>
+            <h2>🏆 All submissions</h2>
+            <div class="sub">One row per player — total points across every level they've played, not a row per attempt.</div>
+          </div>
+          <div class="hstack">
+            <button class="btn btn-ghost" id="exportCsv">⬇ Export CSV</button>
+            <button class="btn btn-danger" id="clearData">Clear all data</button>
+          </div>
+        </div>
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th>#</th><th>Player</th><th>Total points</th><th>Levels played</th><th>Best single score</th><th>Last played</th></tr></thead>
+            <tbody id="lbBody"></tbody>
+          </table>
+        </div>
+        <div class="empty-state" id="emptyState" style="display:none;">No submissions recorded yet.</div>
+      </div>
+    </div>
+  </div>
+  <footer class="foot">Local-only admin view — connect a real database for multi-device data (see README).</footer>
+</div>
+
+<script src="js/ecg-data.js"></script>
+<script src="js/common.js"></script>
+<script>
+  const user = requireLogin();
+  if (user) {
+    if (!user.isAdmin) { window.location.href = "levels.html"; }
+    exitAdminPreview(); // landing back on the dashboard always ends preview mode
+    document.getElementById("userPill").textContent = "👤 " + user.name;
+    document.getElementById("logoutBtn").addEventListener("click", logout);
+    document.getElementById("playAsUserBtn").addEventListener("click", (e) => {
+      e.preventDefault();
+      enterAdminPreview();
+      window.location.href = "levels.html";
+    });
+
+    // ---- tab switching ----
+    document.getElementById("adminTabs").addEventListener("click", (e) => {
+      const btn = e.target.closest(".admin-tab");
+      if (!btn) return;
+      document.querySelectorAll(".admin-tab").forEach(b => {
+        b.classList.remove("active");
+        b.style.background = "";
+        b.style.color = "";
+      });
+      btn.classList.add("active");
+      document.querySelectorAll(".admin-panel").forEach(p => p.classList.remove("active"));
+      document.getElementById("panel-" + btn.dataset.tab).classList.add("active");
+    });
+    // color the active tab pill with a rotating palette so the nav itself feels colorful
+    const tabPalette = ["#39ff88", "#22d3ee", "#f472b6", "#fbbf24"];
+    document.querySelectorAll(".admin-tab").forEach((btn, i) => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".admin-tab").forEach(b => { b.style.background = ""; b.style.color = ""; });
+        btn.style.background = tabPalette[i];
+        btn.style.color = "#04120d";
+      });
+    });
+    document.querySelector('.admin-tab[data-tab="overview"]').style.background = tabPalette[0];
+    document.querySelector('.admin-tab[data-tab="overview"]').style.color = "#04120d";
+
+    // ---- dataset table ----
+    const typesBody = document.getElementById("typesBody");
+    Object.values(ECG_TYPES).forEach((t) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td class="mono">${t.id}</td><td>${t.name}</td><td><span class="pill-diff ${t.difficulty}">${t.difficulty}</span></td><td class="mono">${t.rate}</td><td>${t.hint}</td>`;
+      typesBody.appendChild(tr);
+    });
+    document.getElementById("statTypes").textContent = Object.keys(ECG_TYPES).length;
+
+    // ---- levels table (with color swatch) ----
+    const levelsBody = document.getElementById("levelsBody");
+    LEVELS.forEach((l) => {
+      const theme = themeForLevel(l.level);
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td>${l.level}</td>
+        <td><span class="level-swatch"><span class="dot-sw" style="background:${theme.accent}; color:${theme.accent};"></span>${theme.icon} ${theme.name}</span></td>
+        <td>${l.title}</td>
+        <td>${l.waveforms.map(id => ECG_TYPES[id].name).join(", ")}</td>
+        <td>${(l.extraDistractors||[]).map(id => ECG_TYPES[id].name).join(", ")}</td>
+        <td class="mono">${l.timeBonusSeconds}s</td>`;
+      levelsBody.appendChild(tr);
+    });
+
+    // ---- leaderboard / stats / chart / podium ----
+    function renderBoard() {
+      const rows = getLeaderboard();
+      const body = document.getElementById("lbBody");
+      body.innerHTML = "";
+      document.getElementById("statSubs").textContent = rows.length;
+      document.getElementById("statPlayers").textContent = new Set(rows.map(r => r.name)).size;
+      document.getElementById("statAvg").textContent = rows.length ? Math.round(rows.reduce((s,r)=>s+r.score,0)/rows.length) : 0;
+
+      // one row per player (total points across every level), not per attempt
+      const players = getPlayerLeaderboard();
+      document.getElementById("emptyState").style.display = players.length ? "none" : "block";
+      players.forEach((p, i) => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td>${i + 1}</td><td>${p.name}</td>
+          <td class="mono">${p.totalPoints}</td>
+          <td>${p.levelsPlayed}/${LEVELS.length}</td>
+          <td class="mono">${p.bestSingle}</td>
+          <td>${new Date(p.lastPlayed).toLocaleString()}</td>`;
+        body.appendChild(tr);
+      });
+
+      // bar chart: average score per level
+      const chart = document.getElementById("barsChart");
+      chart.innerHTML = "";
+      LEVELS.forEach((l) => {
+        const theme = themeForLevel(l.level);
+        const scores = rows.filter(r => r.level === l.level).map(r => r.score);
+        const avg = scores.length ? Math.round(scores.reduce((a,b)=>a+b,0)/scores.length) : 0;
+        const maxPossible = 250; // rough ceiling for bar scaling
+        const pct = Math.max(4, Math.min(100, (avg / maxPossible) * 100));
+        const col = document.createElement("div");
+        col.className = "bar-col";
+        col.innerHTML = `
+          <span class="bar-val">${avg || "—"}</span>
+          <div class="bar" style="height:${pct}%; --bar-color:${theme.accent}; --bar-glow:${theme.accent}55; animation-delay:${l.level * 0.05}s;"></div>
+          <span class="bar-lbl">${theme.icon}<br>L${l.level}</span>
+        `;
+        chart.appendChild(col);
+      });
+
+      // podium: top total points per player (same aggregate as the Submissions table)
+      const top3 = players.slice(0, 3);
+      const podium = document.getElementById("podiumRow");
+      const slots = [
+        { cls: "silver", medal: "🥈" }, { cls: "gold", medal: "🥇" }, { cls: "bronze", medal: "🥉" }
+      ];
+      const order = [top3[1], top3[0], top3[2]];
+      podium.innerHTML = order.map((r, i) => r ? `
+        <div class="podium-slot ${slots[i].cls}">
+          <div class="medal">${slots[i].medal}</div>
+          <div class="p-name">${r.name}</div>
+          <div class="p-score">${r.totalPoints} pts</div>
+        </div>` : "").join("") || `<p style="color:var(--ui-dim);">No submissions yet — the podium is waiting for its first player.</p>`;
+    }
+    renderBoard();
+
+    document.getElementById("exportCsv").addEventListener("click", () => {
+      downloadFile("ecg_leaderboard.csv", exportLeaderboardCSV(), "text/csv");
+    });
+    document.getElementById("clearData").addEventListener("click", () => {
+      if (confirm("This will permanently clear all leaderboard and progress data on this device. Continue?")) {
+        localStorage.removeItem("ecg_leaderboard");
+        localStorage.removeItem("ecg_progress");
+        renderBoard();
+      }
+    });
+  }
+</script>
+</body>
+</html>
