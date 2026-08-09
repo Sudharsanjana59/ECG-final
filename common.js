@@ -229,7 +229,7 @@ function launchConfetti(container) {
   wrap.className = "confetti";
   for (let i = 0; i < 60; i++) {
     const s = document.createElement("span");
-    const size = 5 + Math.random() * 6;
+    const size = 5 + Math.random() * 6; 
     s.style.left = Math.random() * 100 + "vw";
     s.style.width = size + "px";
     s.style.height = size * 0.5 + "px";
