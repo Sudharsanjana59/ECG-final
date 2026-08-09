@@ -224,7 +224,7 @@ button { font-family: var(--font-body); cursor: pointer; }
 /* colorful signature glow, unique per level via --accent set inline by JS */
 .level-card::after {
   content: ""; position: absolute; top: -40%; right: -30%; width: 70%; height: 70%; z-index: 0;
-  background: radial-gradient(circle, var(--accent, var(--trace-green)) 0%, transparent 70%);
+  background: radial-gradient(circle, var(--accent, var(--trace-green)) 0%, transparent 70%); 
   opacity: 0.16; filter: blur(6px); pointer-events: none;
   animation: auraPulse 3.6s ease-in-out infinite;
 }
