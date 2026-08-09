@@ -104,3 +104,6 @@ for P/QRS/T waves, sine sums for chaotic rhythms) rather than photographed
 or scanned real strips — this keeps the game copyright-clean and lets every
 wave scale crisply to any screen size. They are stylized for gameplay and
 readability, not for clinical diagnosis.
+
+## google verification
+google verification
