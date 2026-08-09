@@ -141,7 +141,7 @@ function buildCertificateSVG(record) {
    which is why all certificate styling is inlined. */
 function downloadCertificatePNG(record) {
   const svgEl = document.querySelector("#certFrame svg");
-  const serialized = new XMLSerializer().serializeToString(svgEl);
+  const serialized = new XMLSerializer().serializeToString(svgEl); 
   const svgBlob = new Blob([serialized], { type: "image/svg+xml;charset=utf-8" });
   const url = URL.createObjectURL(svgBlob);
   const img = new Image();
