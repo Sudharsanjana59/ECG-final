@@ -5,7 +5,7 @@
    large, on a classic monitor grid, so the trace is easy to read clearly.
    ========================================================================= */
 
-/* ---- small deterministic PRNG so a given rhythm always looks the same ---- */
+/* ---- small deterministic PRNG so a given rhythm always looks the same ---- */ 
 function mulberry32(seed) {
   return function () {
     seed |= 0;
